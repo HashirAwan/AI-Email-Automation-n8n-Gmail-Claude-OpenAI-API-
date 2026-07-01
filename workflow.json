@@ -1,0 +1,143 @@
+{
+  "name": "AI Email Auto-Responder",
+  "nodes": [
+    {
+      "parameters": {
+        "pollTimes": {
+          "item": [{ "mode": "everyMinute" }]
+        },
+        "filters": {
+          "includeSpamTrash": false
+        },
+        "options": {}
+      },
+      "id": "gmail-trigger",
+      "name": "Gmail Trigger",
+      "type": "n8n-nodes-base.gmailTrigger",
+      "typeVersion": 1,
+      "position": [240, 300],
+      "credentials": {
+        "gmailOAuth2": { "id": "gmail-cred", "name": "Gmail Account" }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{ $json.labelIds }}",
+              "operation": "notContains",
+              "value2": "SENT"
+            }
+          ]
+        }
+      },
+      "id": "filter-sent",
+      "name": "Filter Sent Emails",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const email = $input.first().json;\n\nconst sender = email.from || 'Unknown Sender';\nconst subject = email.subject || '(No Subject)';\nconst body = email.text || email.snippet || '';\nconst messageId = email.id;\nconst threadId = email.threadId;\n\nreturn [{\n  json: {\n    sender,\n    subject,\n    body: body.substring(0, 2000),\n    messageId,\n    threadId,\n    receivedAt: new Date().toISOString()\n  }\n}];"
+      },
+      "id": "extract-email",
+      "name": "Extract Email Data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [680, 240]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.anthropic.com/v1/messages",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "anthropic-version", "value": "2023-06-01" },
+            { "name": "content-type", "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": []
+        },
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"model\": \"claude-sonnet-4-6\",\n  \"max_tokens\": 500,\n  \"system\": \"You are a professional email assistant. Write concise, friendly, and professional email replies on behalf of the user. Keep replies under 150 words. Do not include a subject line. Sign off with 'Best regards,\\nAwan Hashir'.\",\n  \"messages\": [\n    {\n      \"role\": \"user\",\n      \"content\": \"Write a professional reply to this email:\\n\\nFrom: {{ $json.sender }}\\nSubject: {{ $json.subject }}\\n\\nEmail body:\\n{{ $json.body }}\\n\\nGenerate a helpful, relevant, and concise reply.\"\n    }\n  ]\n}",
+        "options": {}
+      },
+      "id": "claude-api",
+      "name": "Generate AI Reply (Claude)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [900, 240],
+      "credentials": {
+        "httpHeaderAuth": { "id": "claude-cred", "name": "Claude API Key" }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const response = $input.first().json;\nconst aiReply = response.content[0].text;\n\nreturn [{\n  json: {\n    aiReply,\n    ...($('Extract Email Data').first().json)\n  }\n}];"
+      },
+      "id": "parse-reply",
+      "name": "Parse AI Reply",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1120, 240]
+    },
+    {
+      "parameters": {
+        "operation": "reply",
+        "messageId": "={{ $json.messageId }}",
+        "threadId": "={{ $json.threadId }}",
+        "message": "={{ $json.aiReply }}",
+        "options": {}
+      },
+      "id": "send-reply",
+      "name": "Send Reply via Gmail",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2,
+      "position": [1340, 240],
+      "credentials": {
+        "gmailOAuth2": { "id": "gmail-cred", "name": "Gmail Account" }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const data = $input.first().json;\nconsole.log(`[${new Date().toISOString()}] Email processed: ${data.subject} from ${data.sender}`);\nreturn $input.all();"
+      },
+      "id": "logger",
+      "name": "Log Activity",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1560, 240]
+    }
+  ],
+  "connections": {
+    "Gmail Trigger": {
+      "main": [[{ "node": "Filter Sent Emails", "type": "main", "index": 0 }]]
+    },
+    "Filter Sent Emails": {
+      "main": [[{ "node": "Extract Email Data", "type": "main", "index": 0 }]]
+    },
+    "Extract Email Data": {
+      "main": [[{ "node": "Generate AI Reply (Claude)", "type": "main", "index": 0 }]]
+    },
+    "Generate AI Reply (Claude)": {
+      "main": [[{ "node": "Parse AI Reply", "type": "main", "index": 0 }]]
+    },
+    "Parse AI Reply": {
+      "main": [[{ "node": "Send Reply via Gmail", "type": "main", "index": 0 }]]
+    },
+    "Send Reply via Gmail": {
+      "main": [[{ "node": "Log Activity", "type": "main", "index": 0 }]]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "tags": ["AI", "Email", "Automation", "Gmail", "Claude"]
+}
